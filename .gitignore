@@ -1,0 +1,8 @@
+core
+*.core
+__pycache__/
+*.pyc
+venv/
+.venv/
+FaceRecognition/face_lib/shape_predictor_68_face_landmarks.dat
+opencv/cv2/cv2.pyd
