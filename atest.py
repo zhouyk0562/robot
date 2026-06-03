@@ -14,7 +14,7 @@ class MotorGrayscaleTester:
     def set_motors(self, left_speed, right_speed):
         """设置左右电机速度"""
         self.up.CDS_SetSpeed(1, left_speed)
-        self.up.CDS_SetSpeed(2, -right_speed)  # 注意右电机可能需要反向
+        self.up.CDS_SetSpeed(2, right_speed)  # 注意右电机可能需要反向
 
     def stop_motors(self):
         """停止所有电机"""
@@ -33,24 +33,24 @@ class MotorGrayscaleTester:
             # 前进测试
             print("\n[1] 前进测试 2秒...")
             self.set_motors(self.test_speed, self.test_speed)
-            time.sleep(2)
+            time.sleep(0.5)
 
             # 左转测试
             print("[2] 左转测试 1.5秒...")
-            self.set_motors(-self.test_speed // 2, self.test_speed)
-            time.sleep(1.5)
+            self.set_motors(self.test_speed, -self.test_speed)
+            time.sleep(0.5)
 
-            # 右转测试
+            # # 右转测试
             print("[3] 右转测试 1.5秒...")
             self.set_motors(self.test_speed, -self.test_speed // 2)
-            time.sleep(1.5)
+            time.sleep(0.5)
 
-            # 后退测试
+            #后退测试
             print("[4] 后退测试 2秒...")
             self.set_motors(-self.test_speed, -self.test_speed)
-            time.sleep(2)
+            time.sleep(0.5)
 
-            # 停止
+            #停止
             self.stop_motors()
             print("\n测试完成！")
 
