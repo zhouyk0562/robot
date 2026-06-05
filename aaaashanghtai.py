@@ -9,5 +9,5 @@ if __name__ == '__main__':
     while True:
         # up.CDS_SetSpeed(1,-300)
         # time.sleep(0.5)
-        up.CDS_SetSpeed(1,-500)
-        up.CDS_SetSpeed(2,-500)
+        up.CDS_SetSpeed(1,-300)
+        up.CDS_SetSpeed(2,-300)
