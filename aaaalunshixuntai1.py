@@ -10,26 +10,26 @@ up.ADC_IO_Open()       # ADC 扩展板（灰度传感器）
 
 # ========== 可调参数区 ==========
 # 四个方向独立的黑线阈值（小于对应值视为检测到边缘）
-THRESHOLD_FRONT = 1400  # 前方灰度阈值
-THRESHOLD_REAR  = 2200   # 后方灰度阈值
-THRESHOLD_LEFT  = 1080   # 左侧灰度阈值
+THRESHOLD_FRONT = 1480  # 前方灰度阈值
+THRESHOLD_REAR  = 2278   # 后方灰度阈值
+THRESHOLD_LEFT  = 1280   # 左侧灰度阈值
 THRESHOLD_RIGHT = 1620   # 右侧灰度阈值
 
 # 基础前进速度（左轮通道2，右轮通道1）
-LEFT_SPEED_FWD  = 500
-RIGHT_SPEED_FWD = 500
+LEFT_SPEED_FWD  = 600
+RIGHT_SPEED_FWD = 600
 
 # 后退速度
-LEFT_SPEED_BACK  = -500
-RIGHT_SPEED_BACK = -500
+LEFT_SPEED_BACK  = -600
+RIGHT_SPEED_BACK = -600
 
 # 原地转弯速度（左转：左轮倒转，右轮正转；右转相反）
-TURN_LEFT_SPEED  = -450   # 转弯时左轮速度
-TURN_RIGHT_SPEED = 450    # 转弯时右轮速度
+TURN_LEFT_SPEED  = -600   # 转弯时左轮速度
+TURN_RIGHT_SPEED = 600    # 转弯时右轮速度
 
 # 动作持续时间（秒）
 BACK_DURATION  = 0.5      # 后退时长
-TURN_DURATION  = 0.5      # 转弯时长（角度微调）
+TURN_DURATION  = 0.7      # 转弯时长（角度微调）
 # ================================
 
 def read_all_grays():
