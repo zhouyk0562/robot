@@ -9,7 +9,7 @@ up.CDS_Open()        # 如果只测灰度，其实只需要 ADC_IO_Open
 up.ADC_IO_Open()     # 打开 ADC 扩展板
 
 print("四路灰度传感器测试开始，按 Ctrl+C 退出\n")
-print("时间(s)\t通道0\t通道1\t通道2\t通道3")
+print("时间(s)\t通道后\t通道前\t通道左\t通道右")
 print("-" * 50)
 
 try:

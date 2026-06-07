@@ -10,7 +10,7 @@ up.ADC_IO_Open()       # ADC 扩展板（灰度 + IO）
 
 # ========== 可调参数区 ==========
 # 灰度传感器阈值（小于对应值视为检测到边缘）
-THRESHOLD_FRONT = 1450
+THRESHOLD_FRONT = 1400
 THRESHOLD_REAR  = 2200
 THRESHOLD_LEFT  = 1080
 THRESHOLD_RIGHT = 1620
@@ -20,20 +20,20 @@ LEFT_SPEED_FWD   = 500
 RIGHT_SPEED_FWD  = 500
 LEFT_SPEED_BACK  = -500
 RIGHT_SPEED_BACK = -500
-TURN_LEFT_SPEED  = -600   # 左转时左轮速度
-TURN_RIGHT_SPEED = 600    # 左转时右轮速度（原地左转：左轮倒转，右轮正转）
-# 原地右转时交换即可
+TURN_LEFT_SPEED  = -500   # 左转时左轮速度（这里实际未直接用，转向用下面的）
+TURN_RIGHT_SPEED = 500    # 左转时右轮速度（原地左转：左轮倒转，右轮正转）
 
 # 动作持续时间（秒）
 BACK_DURATION   = 0.5
 TURN_DURATION   = 0.5      # 调整用短转弯
-TURN_SIDE_DUR   = 0.5      # 侧向红外触发时转弯时间
-RAM_DURATION    = 0.1      # 冲撞单次循环时间（配合主循环检查边缘）
-CYCLE_DELAY     = 0.05     # 主循环节拍
+TURN_SIDE_DUR   = 0.3    # 侧向红外触发时转弯时间
+RAM_DURATION    = 0.1      # 冲撞单次循环时间
+CYCLE_DELAY     = 0.01     # 主循环节拍
 
-# 边缘恢复参数
-RECOVER_TURN_SPEED = 500   # 恢复时旋转速度（左轮-500，右轮500，即原地左转）
-RECOVER_CHECK_DELAY = 0.05 # 恢复时检查间隔
+# ★ 边缘恢复新增参数（防止卡死）
+EDGE_RECOVERY_TIMEOUT = 2   # 单次旋转最长等待时间（秒）
+EDGE_FORWARD_TIME     = 0.5   # 超时后前进脱困的时间（秒）
+EDGE_MAX_ATTEMPTS     = 2     # 前进重试次数（总尝试次数 = 重试次数 + 1）
 # ================================
 
 # ---------- 传感器读取 ----------
@@ -50,10 +50,7 @@ def read_all_grays():
     return front, rear, left, right
 
 def read_io_bit(bit_index):
-    """
-    读取指定 IO 口的电平（0或1）
-    adc_io_InputGetAll() 返回整数值，位0对应IO0，位1对应IO1，以此类推
-    """
+    """读取指定 IO 口的电平（0或1）"""
     val = up.ADC_IO_GetAllInputLevel()
     return (val >> bit_index) & 1
 
@@ -99,11 +96,11 @@ def turn_right():
     """原地右转：左轮正转，右轮倒转"""
     set_motors(TURN_RIGHT_SPEED, -TURN_RIGHT_SPEED)
 
-# ---------- 灰度巡台逻辑（保留原算法）----------
+# ---------- 灰度巡台逻辑（已修复左侧缺失）----------
 def grayscale_follow(front, rear, left, right):
     """
-    根据四个灰度值执行一次巡台动作（设置电机速度）。
-    本函数立即返回，不阻塞。
+    根据四个灰度值执行一次巡台动作。
+    优先级：前 > 左 > 右 > 后 > 安全前进
     """
     if front < THRESHOLD_FRONT:
         # 前方边缘 → 后退后左转
@@ -113,14 +110,14 @@ def grayscale_follow(front, rear, left, right):
         turn_left()
         time.sleep(TURN_DURATION)
         stop()
-    elif left < THRESHOLD_LEFT:
-        # 左侧边缘 → 右转
+    elif left < THRESHOLD_LEFT:          # ★ 修复：新增左侧边缘处理
+        # 左侧边缘 → 右转脱离
         stop()
         turn_right()
         time.sleep(TURN_DURATION)
         stop()
     elif right < THRESHOLD_RIGHT:
-        # 右侧边缘 → 左转
+        # 右侧边缘 → 左转脱离
         stop()
         turn_left()
         time.sleep(TURN_DURATION)
@@ -134,33 +131,54 @@ def grayscale_follow(front, rear, left, right):
         # 安全 → 直行
         forward()
 
-# ---------- 边缘恢复（最高优先级）----------
+# ---------- 边缘恢复（已修复卡死问题）----------
 def recover_from_edge():
     """
-    当检测到边缘悬空时调用。
-    先后退一段，然后原地旋转直到四个灰度值都大于等于阈值（安全）。
+    边缘恢复：
+    1. 先后退离开边缘；
+    2. 原地左转，实时检测四路灰度是否全部恢复正常；
+    3. 若在 EDGE_RECOVERY_TIMEOUT 秒内未恢复，则停止旋转，
+       向前行驶 EDGE_FORWARD_TIME 秒尝试脱困，然后重新旋转；
+    4. 最多尝试 EDGE_MAX_ATTEMPTS 次前进脱困，若仍失败则退出，
+       由主循环下一轮重新判断。
     """
     print("边缘触发！开始恢复...")
     stop()
-    # 1. 后退
+    # 1. 后退，远离边缘
     backward()
     time.sleep(0.7)
     stop()
     time.sleep(0.1)
 
-    # 2. 旋转并检查灰度，直到安全
-    # 先原地左转（也可以改为来回摆头，这里简单持续左转）
-    turn_left()
-    while True:
-        front, rear, left, right = read_all_grays()
-        # 判断是否全部安全：所有值 >= 各自阈值
-        if (front >= THRESHOLD_FRONT and rear >= THRESHOLD_REAR and
-            left >= THRESHOLD_LEFT and right >= THRESHOLD_RIGHT):
-            stop()
-            print("已恢复到安全位置")
-            break
-        time.sleep(RECOVER_CHECK_DELAY)
-    # 恢复后稍停，避免立即又触发
+    attempts = 0
+    # 外层循环：最多进行 (EDGE_MAX_ATTEMPTS + 1) 次旋转尝试
+    while attempts <= EDGE_MAX_ATTEMPTS:
+        # 2. 开始旋转并等待灰度全部安全
+        turn_left()
+        start_time = time.time()
+        while time.time() - start_time < EDGE_RECOVERY_TIMEOUT:
+            front, rear, left, right = read_all_grays()
+            # 判断是否全部安全：所有值 >= 各自阈值
+            if (front >= THRESHOLD_FRONT and rear >= THRESHOLD_REAR and
+                left >= THRESHOLD_LEFT and right >= THRESHOLD_RIGHT):
+                stop()
+                print("已恢复到安全位置")
+                time.sleep(0.2)
+                return  # 成功恢复，直接返回
+            time.sleep(0.05)   # 检查间隔（0.05秒）
+
+        # 3. 超时未恢复：停止旋转，尝试前进脱困
+        stop()
+        print(f"旋转超时（第{attempts+1}次），尝试前进脱困")
+        forward()
+        time.sleep(EDGE_FORWARD_TIME)
+        stop()
+        time.sleep(0.1)
+        attempts += 1
+
+    # 4. 所有尝试均失败，放弃本次恢复，交由主循环再次处理
+    stop()
+    print("边缘恢复失败，放弃等待，继续主循环")
     time.sleep(0.2)
 
 # ---------- 带边缘检查的冲撞（持续前进直到目标丢失或边缘触发）----------
@@ -171,7 +189,6 @@ def ram_forward_until_safe():
     如果目标丢失（前向两个红外都丢失），则停止。
     """
     forward()
-    start_time = time.time()
     while True:
         # 边缘优先
         edge_l, edge_r = read_edge_ir()
@@ -184,11 +201,6 @@ def ram_forward_until_safe():
             stop()
             print("目标丢失，停止冲撞")
             return
-        # # 超时保护（最长冲撞2秒）
-        # if time.time() - start_time > 2.0:
-        #     stop()
-        #     print("冲撞超时")
-        #     return
         time.sleep(RAM_DURATION)
 
 # ---------- 主循环 ----------
@@ -218,7 +230,7 @@ try:
             print("左前发现目标，左转调整")
             stop()
             turn_left()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop()
             continue
 
@@ -227,7 +239,7 @@ try:
             print("右前发现目标，右转调整")
             stop()
             turn_right()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop()
             continue
 
@@ -240,8 +252,7 @@ try:
                 time.sleep(TURN_SIDE_DUR)
                 stop()
                 continue
-            if sr == 0:   # 右侧有目标，
-
+            if sr == 0:   # 右侧有目标
                 print("右侧发现目标，右转引入")
                 stop()
                 turn_right()
