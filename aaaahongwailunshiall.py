@@ -3,8 +3,8 @@
 """
 红外边缘巡台 + 红外目标追踪 + 自动发车 + 掉台恢复程序
 功能：
-- 发车：启动后等待左右侧向红外同时检测到目标，全速后退固定时长上台
-- 掉台恢复：灰度四路低于阈值视为掉台，扫描搜索台面，找到后前进冲撞再全力后退上台
+- 发车：启动后等待左右侧向红外同时检测到目标，全速后退固定时间（不检测上台）
+- 掉台恢复：灰度加权平均低于阈值视为掉台，后退旋转扫描搜索台面，找到后前进冲撞再全力后退上台
 - 巡台：底部红外（IO4/IO6）边缘悬空脱困
 - 追踪：前向红外（IO0/IO1）和侧向红外（IO2/IO3）目标追踪
 - 所有速度、时间、方向参数均可独立调节
@@ -21,74 +21,82 @@ up.ADC_IO_Open()
 # ==================== 可调参数区（所有参数独立控制） ====================
 
 # ======== 发车参数 ========
-START_SIDE_DETECT_TIMEOUT = 0.05    # 发车等待中，每次检测的间隔（秒）
-START_BACK_SPEED = -1000            # 发车全速后退速度（负值，表示全力后退）
-START_BACK_DURATION =0.7            # 发车后退持续时间（秒）
+# 发车时，程序会等待左右侧向红外（IO2,IO3）同时为0（检测到目标），然后全速后退
+START_SIDE_DETECT_TIMEOUT = 0.05    # 发车等待中，每次检测侧向红外的间隔（秒），越小响应越快
+START_BACK_SPEED = -1000            # 发车全速后退速度（负值），负值越大后退越快
+START_BACK_DURATION = 2             # 发车后退固定持续时间（秒），不检测上台，时间到即停
 
 # ======== 掉台恢复参数 ========
-# ---- 灰度传感器掉台阈值（四路均低于此值视为掉台） ----
-OFF_TABLE_THRESHOLD = 1500          # 掉台灰度阈值
+# 掉台恢复利用灰度传感器判断是否离开台面，并通过后退+旋转扫描寻找台面边缘，再前进冲撞+全力后退上台
+
+# ---- 灰度校正系数 ----
+# 四路灰度传感器（前、后、左、右）在相同光照下数值可能不同，系数使它们在台下（无反射）时都约等于1000
+# 顺序：[前, 后, 左, 右]  —— 对应 read_all_grays() 返回顺序 adc[1], adc[0], adc[2], adc[3]
+GRAY_COEFF = [1.2195, 0.625, 1.9231, 1.0]
+
+# ---- 掉台判断阈值 ----
+OFF_TABLE_AVG_THRESHOLD = 1025      # 校正后四路灰度平均值低于此值判定为掉台（阈值略高于台下典型值1000，留裕度）
 
 # ---- 掉台恢复动作速度 ----
-RECOVERY_FORWARD_SPEED = 700        # 掉台恢复时前进撞台速度（正值）
-RECOVERY_BACK_SPEED = -1000         # 掉台恢复时全力后退速度（负值）
+RECOVERY_FORWARD_SPEED = 600        # 掉台恢复时前进撞台速度（正值，冲向台面边缘）
+RECOVERY_BACK_SPEED = -1000         # 掉台恢复时全力后退速度（负值，上台后退冲上场地）
 
 # ---- 掉台恢复动作时间 ----
-RECOVERY_FORWARD_TIME = 0.8         # 前进撞台时间（秒）
-RECOVERY_BACK_TIME =1.0            # 全力后退上台时间（秒）
+RECOVERY_FORWARD_TIME = 0.8         # 前进撞台持续时间（秒），确保车轮压到台面边缘
+RECOVERY_BACK_TIME = 2              # 全力后退上台持续时间（秒），足够让小车完全退上台面
 
-# ---- 掉台扫描参数 ----
-SCAN_FORWARD_TIME = 0.5             # 每次扫描前的前进时间（秒）
-SCAN_TURN_SPEED = 600               # 扫描旋转速度（绝对值）
-SCAN_TURN_DIRECTION = 'right'       # 扫描旋转固定方向：'left' 或 'right'
-SCAN_TURN_STEP_TIME = 0.4           # 每次旋转步进时间（秒），控制扫描角度
-SCAN_CHECK_DELAY = 0.02             # 旋转过程中检测间隔（秒）
+# ---- 掉台扫描参数（后退+旋转扫描） ----
+SCAN_FORWARD_TIME = 0.3             # 扫描阶段后退时间（秒），每次旋转前先直线后退一小段，扩大搜索范围
+SCAN_TURN_SPEED = 600               # 扫描旋转速度（绝对值），原地旋转时两轮速度绝对值
+SCAN_TURN_DIRECTION = 'right'       # 扫描旋转固定方向，'left' 或 'right'
+SCAN_TURN_STEP_TIME = 0.3           # 每次旋转步进时间（秒），控制每次转动的角度（时间越长转动越多）
+SCAN_CHECK_DELAY = 0.02             # 旋转过程中检测前向红外的间隔（秒），越小检测越及时
 
 # ======== 巡台直行速度 ========
-PATROL_FORWARD_LEFT  = 600
-PATROL_FORWARD_RIGHT = 600
+PATROL_FORWARD_LEFT  = 500          # 正常巡逻直行时左轮速度（通道2）
+PATROL_FORWARD_RIGHT = 500          # 正常巡逻直行时右轮速度（通道1）
 
 # ======== 巡台通用后退速度 ========
-PATROL_BACK_LEFT  = -800
-PATROL_BACK_RIGHT = -800
+PATROL_BACK_LEFT  = -600            # 巡台/侧向引入恢复时后退左轮速度
+PATROL_BACK_RIGHT = -600            # 巡台/侧向引入恢复时后退右轮速度
 
 # ======== 巡台转向速度 ========
-PATROL_TURN_SPEED = 700
+PATROL_TURN_SPEED = 600             # 巡台原地旋转时两轮速度绝对值（左转为(-600, 600)，右转为(600, -600)）
 
 # ======== 巡台边缘悬空恢复时间参数 ========
-PATROL_BACK_TIME = 0.4
-LEFT_SUSPEND_TURN_TIME = 0.7
-RIGHT_SUSPEND_TURN_TIME = 0.7
-DOUBLE_SUSPEND_TURN_TIME = 0.9
-DOUBLE_SUSPEND_TURN_DIR = 'right'
+PATROL_BACK_TIME = 0.4              # 边缘悬空后统一后退时间（秒）
+LEFT_SUSPEND_TURN_TIME = 0.7        # 仅左侧悬空时，向右转的时间（秒）
+RIGHT_SUSPEND_TURN_TIME = 0.7       # 仅右侧悬空时，向左转的时间（秒）
+DOUBLE_SUSPEND_TURN_TIME = 0.9      # 双侧悬空时，转向的时间（秒）
+DOUBLE_SUSPEND_TURN_DIR = 'right'   # 双侧悬空时优先转向的方向，'left' 或 'right'
 
 # ======== 巡台动作间隔延时 ========
-PATROL_STOP_PAUSE = 0.1
-CYCLE_DELAY = 0.02
+PATROL_STOP_PAUSE = 0.1             # 动作间短暂停车消抖时间（秒）
+CYCLE_DELAY = 0.02                  # 主循环无目标直行时的检查间隔（秒），越小响应越快但CPU占用稍高
 
 # ======== 前向目标慢速引入转向速度 ========
-SLOW_INTRO_SPEED = 500
+SLOW_INTRO_SPEED = 450              # 前向单侧发现目标时，慢速旋转引入的速度（两轮绝对值）
 
 # ======== 侧向目标快速引入速度 ========
-SIDE_FAST_SPEED = 700
+SIDE_FAST_SPEED = 600               # 侧向发现目标时，快速旋转引入的速度（两轮绝对值）
 
 # ======== 侧向快速引入持续时间 ========
-SIDE_TRACK_DUR = 0.7
+SIDE_TRACK_DUR = 0.7                # 侧向引入最长持续时间（秒），超时未被打断则停止旋转
 
 # ======== 前向双亮冲撞速度 ========
-RAM_SPEED_LEFT  = 800
-RAM_SPEED_RIGHT = 800
+RAM_SPEED_LEFT  = 600               # 冲撞时左轮速度（通道2）
+RAM_SPEED_RIGHT = 600               # 冲撞时右轮速度（通道1）
 
-# ======== 冲撞专用边缘恢复参数（独立） ========
-RAM_BACK_SPEED_LEFT  = -600
-RAM_BACK_SPEED_RIGHT = -600
-RAM_BACK_TIME = 0.5
-RAM_LEFT_SUSPEND_TURN_TIME = 0.7
-RAM_RIGHT_SUSPEND_TURN_TIME = 0.7
-RAM_DOUBLE_SUSPEND_TURN_TIME = 0.9
-RAM_DOUBLE_SUSPEND_TURN_DIR = 'right'
-RAM_TURN_SPEED = 700
-RAM_CHECK_DELAY = 0.03
+# ======== 冲撞专用边缘恢复参数（独立于巡台参数） ========
+RAM_BACK_SPEED_LEFT  = -600         # 冲撞中边缘悬空后退时左轮速度
+RAM_BACK_SPEED_RIGHT = -600         # 冲撞中边缘悬空后退时右轮速度
+RAM_BACK_TIME = 0.5                 # 冲撞中边缘恢复后退时间（秒）
+RAM_LEFT_SUSPEND_TURN_TIME = 0.7    # 冲撞中仅左侧悬空时向右转的时间（秒）
+RAM_RIGHT_SUSPEND_TURN_TIME = 0.7   # 冲撞中仅右侧悬空时向左转的时间（秒）
+RAM_DOUBLE_SUSPEND_TURN_TIME = 0.9  # 冲撞中双侧悬空时转向的时间（秒）
+RAM_DOUBLE_SUSPEND_TURN_DIR = 'right' # 冲撞中双侧悬空转向方向，'left' 或 'right'
+RAM_TURN_SPEED = 600                # 冲撞中边缘恢复转向速度（绝对值）
+RAM_CHECK_DELAY = 0.02              # 冲撞循环中传感器检测间隔（秒）
 
 # ==================== 传感器读取 ====================
 def read_edge_ir():
@@ -116,6 +124,24 @@ def read_all_grays():
     """灰度传感器，返回 (前, 后, 左, 右) 灰度值"""
     adc = up.ADC_Get_All_Channle()
     return adc[1], adc[0], adc[2], adc[3]
+
+# ==================== 灰度校正读取与掉台判断 ====================
+def read_adjusted_grays():
+    """返回校正后的四路灰度值（已乘系数）"""
+    fg, rg, lg, rgg = read_all_grays()
+    adj = [
+        fg * GRAY_COEFF[0],
+        rg * GRAY_COEFF[1],
+        lg * GRAY_COEFF[2],
+        rgg * GRAY_COEFF[3]
+    ]
+    return adj
+
+def is_off_table():
+    """校正后四路平均值低于阈值则返回True（掉台）"""
+    adj = read_adjusted_grays()
+    avg = sum(adj) / 4.0
+    return avg < OFF_TABLE_AVG_THRESHOLD
 
 # ==================== 电机控制 ====================
 def set_motors(left_speed, right_speed):
@@ -181,6 +207,10 @@ def recovery_forward():
 def recovery_backward():
     """掉台恢复全力后退"""
     set_motors(RECOVERY_BACK_SPEED, RECOVERY_BACK_SPEED)
+
+def recovery_backward_scan():
+    """掉台恢复扫描时用的后退（速度大小与前进撞台相同，方向相反）"""
+    set_motors(-RECOVERY_FORWARD_SPEED, -RECOVERY_FORWARD_SPEED)
 
 def scan_turn(direction):
     """扫描旋转，不延时，由调用者控制时间"""
@@ -295,15 +325,9 @@ def ram_forward_until_safe():
             return
         time.sleep(RAM_CHECK_DELAY)
 
-# ==================== 掉台判断与恢复 ====================
-def is_off_table():
-    """四路灰度全部低于掉台阈值则返回True"""
-    fg, rg, lg, rgg = read_all_grays()
-    return (fg < OFF_TABLE_THRESHOLD and rg < OFF_TABLE_THRESHOLD and
-            lg < OFF_TABLE_THRESHOLD and rgg < OFF_TABLE_THRESHOLD)
-
+# ==================== 掉台恢复（后退旋转扫描） ====================
 def off_table_recovery():
-    """掉台恢复：扫描寻找台面，冲撞上台"""
+    """掉台恢复：后退+旋转扫描寻找台面，冲撞上台"""
     print("掉台！开始恢复...")
     stop()
     time.sleep(0.1)
@@ -318,16 +342,15 @@ def off_table_recovery():
             recovery_backward()
             time.sleep(RECOVERY_BACK_TIME)
             stop()
-            # 检查是否上台成功
             if not is_off_table():
                 print("成功上台，恢复巡台")
                 return
             else:
                 print("冲台未成功，继续扫描")
 
-        # 扫描循环：前进一段 -> 旋转一个步进角度
-        print(f"前向未发现目标，前进{SCAN_FORWARD_TIME}秒后旋转扫描")
-        recovery_forward()
+        # 扫描循环：后退一段 → 旋转一个步进角度
+        print(f"前向未发现目标，后退{SCAN_FORWARD_TIME}秒后旋转扫描")
+        recovery_backward_scan()
         time.sleep(SCAN_FORWARD_TIME)
         stop()
         time.sleep(0.1)
@@ -360,9 +383,9 @@ def off_table_recovery():
         stop()
         time.sleep(0.1)
 
-# ==================== 发车程序 ====================
+# ==================== 发车程序（固定后退时间） ====================
 def start_procedure():
-    """等待侧向双红外同时检测到目标，全速后退上台"""
+    """等待侧向双红外同时检测到目标，全速后退固定时间，不检测上台"""
     print("发车程序：等待左右侧向红外同时检测到目标...")
     while True:
         sl, sr = read_side_ir()
